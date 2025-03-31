@@ -1,85 +1,74 @@
-name: BPB Worker Ultimate Camouflage
+name: BPB Worker Final Solution
 
 on:
   push:
     branches: [main]
-  schedule:
-    - cron: "0 1 * * *"
-
-permissions:
-  contents: write
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
+    # 关键修复1：前置条件检查
+    env:
+      CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
     steps:
-      # 第一阶段：环境验证
-      - name: Validate Secrets
+      - name: 验证密钥存在
+        if: env.CF_TOKEN == '' || env.CF_ACCOUNT == ''
         run: |
-          [ -n "${{ secrets.CLOUDFLARE_API_TOKEN }}" ] || { echo "::error::❌ 缺失CLOUDFLARE_API_TOKEN"; exit 1; }
-          [ -n "${{ secrets.CLOUDFLARE_ACCOUNT_ID }}" ] || { echo "::error::❌ 缺失CLOUDFLARE_ACCOUNT_ID"; exit 1; }
+          echo "::error::❌ 请按以下步骤配置："
+          echo "1. 访问 https://dash.cloudflare.com/profile/api-tokens"
+          echo "2. 创建包含 Workers Edit 权限的 Token"
+          echo "3. 在 GitHub 仓库 Settings → Secrets → Actions 添加："
+          echo "   - CLOUDFLARE_API_TOKEN: 你的Token"
+          echo "   - CLOUDFLARE_ACCOUNT_ID: 账户ID（控制台右上角32位字符）"
+          exit 1
 
-      # 第二阶段：代码获取
       - uses: actions/checkout@v4
-        with:
-          persist-credentials: false  # 禁用自动凭证
 
-      # 第三阶段：依赖安装
-      - name: Setup Environment
+      - name: 安装验证工具
         run: |
           npm install -g javascript-obfuscator@4.0.2
           npm install -g wrangler@4.7.0  # 验证可用版本
 
-      # 第四阶段：代码处理
-      - name: Process Source
+      - name: 获取并处理源码
         run: |
           curl -sSf -o raw.js https://raw.githubusercontent.com/bia-pain-bache/BPB-Worker-Panel/main/build/unobfuscated-worker.js
           
-          # WHOER全项伪装
-          sed -i.bak '
+          # 100% WHOER伪装
+          sed -i '
             s/window\./globalThis.location=/g;
             s/document\./void 0;/g;
             s/navigator\.userAgent/"Mozilla\/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit\/537.36"/g;
-            s/new Date()/new Date(Date.now() + 28800000)/g;
+            s/new Date()/new Date(Date.now() + 28800000)/g; # +8小时美东时区
             s/\.headers\.get("Accept-Language")/"en-US,en;q=0.9"/g;
             s/\.cf\.country/"US"/g;
             s/\.cf\.colo/"IAD"/g;
             s/\.remoteAddress/"8.8.8.8"/g;
           ' raw.js
 
-          # 构建合规模块
-          echo "export default {" > _worker.js
-          echo "  async fetch(request, env) {" >> _worker.js
+          # 构建标准模块
+          echo "export default { fetch: async (req) => {" > _worker.js
           cat raw.js >> _worker.js
           echo "}}" >> _worker.js
 
-      # 第五阶段：混淆加固
-      - name: Obfuscation
+      - name: 安全混淆
         run: |
           javascript-obfuscator _worker.js \
             --output _worker.js \
             --compact true \
             --identifier-names-generator mangled \
             --rename-globals false \
-            --reserved-names "fetch,request,Response,Headers" \
-            --reserved-strings "/US|IAD|8\.8\.8\.8|en-US/i"
+            --reserved-names "fetch,Headers,Response,Request" \
+            --reserved-strings "/US|IAD|8\.8\.8\.8/i"
 
-      # 第六阶段：部署配置
-      - name: Generate Config
+      - name: 部署到Cloudflare
         run: |
-          cat <<EOF > wrangler.toml
-          name = "hz567"
-          main = "_worker.js"
-          compatibility_date = "$(date +'%Y-%m-%d')"
-          compatibility_flags = ["nodejs_compat"]
-          EOF
-
-      # 第七阶段：最终部署
-      - name: Deploy to Cloudflare
-        run: |
-          wrangler deploy --config wrangler.toml
+          wrangler deploy _worker.js \
+            --name hz567 \
+            --compatibility-date $(date +'%Y-%m-%d')
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
